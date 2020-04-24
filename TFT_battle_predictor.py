@@ -46,6 +46,8 @@ class App(QWidget):
         # agjusts the mainwindow size
         self.setFixedSize(1200, 200)
 
+        self.end_round = False
+
         self.filename = 'tft_matches.csv'
         self.initUI()
 
@@ -140,6 +142,7 @@ class App(QWidget):
             # forces the program tp update
             self.last_played[index-1] = 0
             self.sender().repaint()
+            self.end_round = True
 
     @pyqtSlot()
     def dead_click(self):
@@ -156,10 +159,12 @@ class App(QWidget):
 
     @pyqtSlot()
     def next_round_click(self):
-        print(self.fought_round)
-        self.all_game_rounds = np.vstack([self.all_game_rounds, self.fought_round])
-        self.update_last_played()
-        self.fought_round = np.copy(self.dead_players)
+        if self.end_round:
+            print(self.fought_round)
+            self.all_game_rounds = np.vstack([self.all_game_rounds, self.fought_round])
+            self.update_last_played()
+            self.fought_round = np.copy(self.dead_players)
+            self.end_round = False
 
     @pyqtSlot()
     def end_game_click(self):
