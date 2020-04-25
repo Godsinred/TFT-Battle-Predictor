@@ -47,6 +47,7 @@ class App(QWidget):
         self.setFixedSize(1200, 200)
 
         self.end_round = False
+        self.last_fought_index = -1
 
         self.filename = 'tft_matches.csv'
         self.initUI()
@@ -136,11 +137,8 @@ class App(QWidget):
     @pyqtSlot()
     def played_click(self):
         index = int(self.sender().objectName())
-        self.fought_round = np.copy(self.dead_players)
         if self.fought_round[index-1] != -1:
-            self.fought_round[index-1] = 1
-            # forces the program tp update
-            self.last_played[index-1] = 0
+            self.last_fought_index = index-1
             self.sender().repaint()
             self.end_round = True
 
@@ -160,6 +158,9 @@ class App(QWidget):
     @pyqtSlot()
     def next_round_click(self):
         if self.end_round:
+            self.fought_round[self.last_fought_index] = 1
+            # forces the program tp update
+            self.last_played[self.last_fought_index] = 0
             print(self.fought_round)
             self.all_game_rounds = np.vstack([self.all_game_rounds, self.fought_round])
             self.update_last_played()
@@ -168,6 +169,7 @@ class App(QWidget):
 
     @pyqtSlot()
     def end_game_click(self):
+        print("End of Game.. Now writing to CSV.")
         # checks to see if the user forgot to click next round before ending the game
         if 1 in self.fought_round:
             self.all_game_rounds = np.vstack([self.all_game_rounds, self.fought_round])
