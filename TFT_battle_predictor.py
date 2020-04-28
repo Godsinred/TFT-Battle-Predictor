@@ -197,6 +197,8 @@ class App(QWidget):
             self.last_played_labels[i].setText(str(self.last_played[i]))
             self.last_played_labels[i].repaint()
 
+        print("Finished writing to CSV.")
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = App()
