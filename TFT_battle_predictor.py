@@ -48,6 +48,8 @@ class App(QWidget):
 
         self.end_round = False
         self.last_fought_index = -1
+        # supposedly you can't play someone who you fought 4 or less rounds ago (ie at 8 players)
+        self.limit = 4
 
         self.filename = 'tft_matches.csv'
         self.initUI()
@@ -131,6 +133,10 @@ class App(QWidget):
                 self.last_played[i] = -1
 
             self.last_played_labels[i].setText(str(self.last_played[i]))
+            if self.last_played[i] > (self.limit + sum(self.dead_players)):
+                self.player_buttons[i].setStyleSheet("background-color: #46a353; color: white; font-size: 16pt; font-weight:bold")
+            else:
+                self.player_buttons[i].setStyleSheet("background-color: #eb4934; color: white; font-size: 16pt; font-weight:bold")
             self.last_played_labels[i].repaint()
 
 
