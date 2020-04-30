@@ -135,9 +135,15 @@ class App(QWidget):
             self.last_played_labels[i].setText(str(self.last_played[i]))
             if self.last_played[i] > (self.limit + sum(self.dead_players)):
                 self.player_buttons[i].setStyleSheet("background-color: #46a353; color: white; font-size: 16pt; font-weight:bold")
+            elif self.last_played[i] == -1 and self.dead_players[i] == 0:
+                self.player_buttons[i].setStyleSheet("background-color: #46a353; color: white; font-size: 16pt; font-weight:bold")
             else:
                 self.player_buttons[i].setStyleSheet("background-color: #eb4934; color: white; font-size: 16pt; font-weight:bold")
             self.last_played_labels[i].repaint()
+
+        for i in range(self.number_players):
+            if self.dead_players[i] == -1:
+                self.player_buttons[i].setStyleSheet("background-color: #eb4934; color: white; font-size: 16pt; font-weight:bold")
 
 
     @pyqtSlot()
