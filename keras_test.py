@@ -1,168 +1,170 @@
 from __future__ import print_function
-from functools import reduce
-import re
-import tarfile
-
+import collections
+import os
+import tensorflow as tf
+from keras.models import Sequential, load_model
+from keras.layers import Dense, Activation, Embedding, Dropout, TimeDistributed
+from keras.layers import LSTM
+from keras.optimizers import Adam
+from keras.utils import to_categorical
+from keras.callbacks import ModelCheckpoint
 import numpy as np
+import argparse
 
-from keras.utils.data_utils import get_file
-from keras.layers.embeddings import Embedding
-from keras import layers
-from keras.layers import recurrent
-from keras.models import Model
-from keras.preprocessing.sequence import pad_sequences
+"""To run this code, you'll need to first download and extract the text dataset
+    from here: http://www.fit.vutbr.cz/~imikolov/rnnlm/simple-examples.tgz. Change the
+    data_path variable below to your local exraction path"""
 
+data_path = "/Users/jonathan/Desktop/TFT-Battle-Predictor/simple-examples/data"
 
-def tokenize(sent):
-    '''Return the tokens of a sentence including punctuation.
+parser = argparse.ArgumentParser()
+parser.add_argument('run_opt', type=int, default=1, help='An integer: 1 to train, 2 to test')
+parser.add_argument('--data_path', type=str, default=data_path, help='The full path of the training data')
+args = parser.parse_args()
+if args.data_path:
+    data_path = args.data_path
 
-    >>> tokenize('Bob dropped the apple. Where is the apple?')
-    ['Bob', 'dropped', 'the', 'apple', '.', 'Where', 'is', 'the', 'apple', '?']
-    '''
-    return [x.strip() for x in re.split(r'(\W+)', sent) if x.strip()]
-
-
-def parse_stories(lines, only_supporting=False):
-    '''Parse stories provided in the bAbi tasks format
-
-    If only_supporting is true,
-    only the sentences that support the answer are kept.
-    '''
-    data = []
-    story = []
-    for line in lines:
-        line = line.decode('utf-8').strip()
-        nid, line = line.split(' ', 1)
-        nid = int(nid)
-        if nid == 1:
-            story = []
-        if '\t' in line:
-            q, a, supporting = line.split('\t')
-            q = tokenize(q)
-            if only_supporting:
-                # Only select the related substory
-                supporting = map(int, supporting.split())
-                substory = [story[i - 1] for i in supporting]
-            else:
-                # Provide all the substories
-                substory = [x for x in story if x]
-            data.append((substory, q, a))
-            story.append('')
-        else:
-            sent = tokenize(line)
-            story.append(sent)
-    return data
+def read_words(filename):
+    with tf.io.gfile.GFile(filename, "r") as f:
+        return f.read().replace("\n", "<eos>").split()
 
 
-def get_stories(f, only_supporting=False, max_length=None):
-    '''Given a file name, read the file, retrieve the stories,
-    and then convert the sentences into a single story.
+def build_vocab(filename):
+    data = read_words(filename)
 
-    If max_length is supplied,
-    any stories longer than max_length tokens will be discarded.
-    '''
-    data = parse_stories(f.readlines(), only_supporting=only_supporting)
-    flatten = lambda data: reduce(lambda x, y: x + y, data)
-    data = [(flatten(story), q, answer) for story, q, answer in data
-            if not max_length or len(flatten(story)) < max_length]
-    return data
+    counter = collections.Counter(data)
+    count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
+
+    words, _ = list(zip(*count_pairs))
+    word_to_id = dict(zip(words, range(len(words))))
+
+    return word_to_id
 
 
-def vectorize_stories(data, word_idx, story_maxlen, query_maxlen):
-    xs = []
-    xqs = []
-    ys = []
-    for story, query, answer in data:
-        x = [word_idx[w] for w in story]
-        xq = [word_idx[w] for w in query]
-        # let's not forget that index 0 is reserved
-        y = np.zeros(len(word_idx) + 1)
-        y[word_idx[answer]] = 1
-        xs.append(x)
-        xqs.append(xq)
-        ys.append(y)
-    return (pad_sequences(xs, maxlen=story_maxlen),
-            pad_sequences(xqs, maxlen=query_maxlen), np.array(ys))
+def file_to_word_ids(filename, word_to_id):
+    data = read_words(filename)
+    return [word_to_id[word] for word in data if word in word_to_id]
 
-RNN = recurrent.LSTM
-EMBED_HIDDEN_SIZE = 50
-SENT_HIDDEN_SIZE = 100
-QUERY_HIDDEN_SIZE = 100
-BATCH_SIZE = 32
-EPOCHS = 20
-print('RNN / Embed / Sent / Query = {}, {}, {}, {}'.format(RNN,
-                                                           EMBED_HIDDEN_SIZE,
-                                                           SENT_HIDDEN_SIZE,
-                                                           QUERY_HIDDEN_SIZE))
 
-try:
-    path = get_file('babi-tasks-v1-2.tar.gz',
-                    origin='https://s3.amazonaws.com/text-datasets/'
-                           'babi_tasks_1-20_v1-2.tar.gz')
-except:
-    print('Error downloading dataset, please download it manually:\n'
-          '$ wget http://www.thespermwhale.com/jaseweston/babi/tasks_1-20_v1-2'
-          '.tar.gz\n'
-          '$ mv tasks_1-20_v1-2.tar.gz ~/.keras/datasets/babi-tasks-v1-2.tar.gz')
-    raise
+def load_data():
+    # get the data paths
+    train_path = os.path.join(data_path, "ptb.train.txt")
+    valid_path = os.path.join(data_path, "ptb.valid.txt")
+    test_path = os.path.join(data_path, "ptb.test.txt")
 
-# Default QA1 with 1000 samples
-# challenge = 'tasks_1-20_v1-2/en/qa1_single-supporting-fact_{}.txt'
-# QA1 with 10,000 samples
-# challenge = 'tasks_1-20_v1-2/en-10k/qa1_single-supporting-fact_{}.txt'
-# QA2 with 1000 samples
-challenge = 'tasks_1-20_v1-2/en/qa2_two-supporting-facts_{}.txt'
-# QA2 with 10,000 samples
-# challenge = 'tasks_1-20_v1-2/en-10k/qa2_two-supporting-facts_{}.txt'
-with tarfile.open(path) as tar:
-    train = get_stories(tar.extractfile(challenge.format('train')))
-    test = get_stories(tar.extractfile(challenge.format('test')))
+    # build the complete vocabulary, then convert text data to list of integers
+    word_to_id = build_vocab(train_path)
+    train_data = file_to_word_ids(train_path, word_to_id)
+    valid_data = file_to_word_ids(valid_path, word_to_id)
+    test_data = file_to_word_ids(test_path, word_to_id)
+    vocabulary = len(word_to_id)
+    reversed_dictionary = dict(zip(word_to_id.values(), word_to_id.keys()))
 
-vocab = set()
-for story, q, answer in train + test:
-    vocab |= set(story + q + [answer])
-vocab = sorted(vocab)
+    print(train_data[:5])
+    print(word_to_id)
+    print(vocabulary)
+    print(" ".join([reversed_dictionary[x] for x in train_data[:10]]))
+    return train_data, valid_data, test_data, vocabulary, reversed_dictionary
 
-# Reserve 0 for masking via pad_sequences
-vocab_size = len(vocab) + 1
-word_idx = dict((c, i + 1) for i, c in enumerate(vocab))
-story_maxlen = max(map(len, (x for x, _, _ in train + test)))
-query_maxlen = max(map(len, (x for _, x, _ in train + test)))
+train_data, valid_data, test_data, vocabulary, reversed_dictionary = load_data()
 
-x, xq, y = vectorize_stories(train, word_idx, story_maxlen, query_maxlen)
-tx, txq, ty = vectorize_stories(test, word_idx, story_maxlen, query_maxlen)
 
-print('vocab = {}'.format(vocab))
-print('x.shape = {}'.format(x.shape))
-print('xq.shape = {}'.format(xq.shape))
-print('y.shape = {}'.format(y.shape))
-print('story_maxlen, query_maxlen = {}, {}'.format(story_maxlen, query_maxlen))
+class KerasBatchGenerator(object):
 
-print('Build model...')
+    def __init__(self, data, num_steps, batch_size, vocabulary, skip_step=5):
+        self.data = data
+        self.num_steps = num_steps
+        self.batch_size = batch_size
+        self.vocabulary = vocabulary
+        # this will track the progress of the batches sequentially through the
+        # data set - once the data reaches the end of the data set it will reset
+        # back to zero
+        self.current_idx = 0
+        # skip_step is the number of words which will be skipped before the next
+        # batch is skimmed from the data set
+        self.skip_step = skip_step
 
-sentence = layers.Input(shape=(story_maxlen,), dtype='int32')
-encoded_sentence = layers.Embedding(vocab_size, EMBED_HIDDEN_SIZE)(sentence)
-encoded_sentence = RNN(SENT_HIDDEN_SIZE)(encoded_sentence)
+    def generate(self):
+        x = np.zeros((self.batch_size, self.num_steps))
+        y = np.zeros((self.batch_size, self.num_steps, self.vocabulary))
+        while True:
+            for i in range(self.batch_size):
+                if self.current_idx + self.num_steps >= len(self.data):
+                    # reset the index back to the start of the data set
+                    self.current_idx = 0
+                x[i, :] = self.data[self.current_idx:self.current_idx + self.num_steps]
+                temp_y = self.data[self.current_idx + 1:self.current_idx + self.num_steps + 1]
+                # convert all of temp_y into a one hot representation
+                y[i, :, :] = to_categorical(temp_y, num_classes=self.vocabulary)
+                self.current_idx += self.skip_step
+            yield x, y
 
-question = layers.Input(shape=(query_maxlen,), dtype='int32')
-encoded_question = layers.Embedding(vocab_size, EMBED_HIDDEN_SIZE)(question)
-encoded_question = RNN(QUERY_HIDDEN_SIZE)(encoded_question)
+num_steps = 30
+batch_size = 20
+train_data_generator = KerasBatchGenerator(train_data, num_steps, batch_size, vocabulary,
+                                           skip_step=num_steps)
+valid_data_generator = KerasBatchGenerator(valid_data, num_steps, batch_size, vocabulary,
+                                           skip_step=num_steps)
 
-merged = layers.concatenate([encoded_sentence, encoded_question])
-preds = layers.Dense(vocab_size, activation='softmax')(merged)
+hidden_size = 500
+use_dropout=True
+model = Sequential()
+model.add(Embedding(vocabulary, hidden_size, input_length=num_steps))
+model.add(LSTM(hidden_size, return_sequences=True))
+model.add(LSTM(hidden_size, return_sequences=True))
+if use_dropout:
+    model.add(Dropout(0.5))
+model.add(TimeDistributed(Dense(vocabulary)))
+model.add(Activation('softmax'))
 
-model = Model([sentence, question], preds)
-model.compile(optimizer='adam',
-              loss='categorical_crossentropy',
-              metrics=['accuracy'])
+optimizer = Adam()
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
 
-print('Training')
-model.fit([x, xq], y,
-          batch_size=BATCH_SIZE,
-          epochs=EPOCHS,
-          validation_split=0.05)
-
-print('Evaluation')
-loss, acc = model.evaluate([tx, txq], ty,
-                           batch_size=BATCH_SIZE)
-print('Test loss / test accuracy = {:.4f} / {:.4f}'.format(loss, acc))
+print(model.summary())
+checkpointer = ModelCheckpoint(filepath=data_path + '/model-{epoch:02d}.hdf5', verbose=1)
+num_epochs = 50
+if args.run_opt == 1:
+    model.fit_generator(train_data_generator.generate(), len(train_data)//(batch_size*num_steps), num_epochs,
+                        validation_data=valid_data_generator.generate(),
+                        validation_steps=len(valid_data)//(batch_size*num_steps), callbacks=[checkpointer])
+    # model.fit_generator(train_data_generator.generate(), 2000, num_epochs,
+    #                     validation_data=valid_data_generator.generate(),
+    #                     validation_steps=10)
+    model.save(data_path + "final_model.hdf5")
+elif args.run_opt == 2:
+    model = load_model(data_path + "\model-40.hdf5")
+    dummy_iters = 40
+    example_training_generator = KerasBatchGenerator(train_data, num_steps, 1, vocabulary,
+                                                     skip_step=1)
+    print("Training data:")
+    for i in range(dummy_iters):
+        dummy = next(example_training_generator.generate())
+    num_predict = 10
+    true_print_out = "Actual words: "
+    pred_print_out = "Predicted words: "
+    for i in range(num_predict):
+        data = next(example_training_generator.generate())
+        prediction = model.predict(data[0])
+        predict_word = np.argmax(prediction[:, num_steps-1, :])
+        true_print_out += reversed_dictionary[train_data[num_steps + dummy_iters + i]] + " "
+        pred_print_out += reversed_dictionary[predict_word] + " "
+    print(true_print_out)
+    print(pred_print_out)
+    # test data set
+    dummy_iters = 40
+    example_test_generator = KerasBatchGenerator(test_data, num_steps, 1, vocabulary,
+                                                     skip_step=1)
+    print("Test data:")
+    for i in range(dummy_iters):
+        dummy = next(example_test_generator.generate())
+    num_predict = 10
+    true_print_out = "Actual words: "
+    pred_print_out = "Predicted words: "
+    for i in range(num_predict):
+        data = next(example_test_generator.generate())
+        prediction = model.predict(data[0])
+        predict_word = np.argmax(prediction[:, num_steps - 1, :])
+        true_print_out += reversed_dictionary[test_data[num_steps + dummy_iters + i]] + " "
+        pred_print_out += reversed_dictionary[predict_word] + " "
+    print(true_print_out)
+    print(pred_print_out)
