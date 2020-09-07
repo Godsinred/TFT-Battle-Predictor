@@ -1,4 +1,3 @@
-
 import sys
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QDesktopWidget, QLineEdit, QMessageBox, QLabel
 from PyQt5.QtGui import QIcon
