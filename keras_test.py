@@ -15,7 +15,7 @@ import argparse
     from here: http://www.fit.vutbr.cz/~imikolov/rnnlm/simple-examples.tgz. Change the
     data_path variable below to your local exraction path"""
 
-data_path = "/Users/jonathan/Desktop/TFT-Battle-Predictor/simple-examples/data"
+data_path = "/Users/jonathan/Desktop/TFT-Battle-Predictor/data"
 
 parser = argparse.ArgumentParser()
 parser.add_argument('run_opt', type=int, default=1, help='An integer: 1 to train, 2 to test')
