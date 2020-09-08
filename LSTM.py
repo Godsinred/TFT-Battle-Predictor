@@ -13,7 +13,7 @@ from sklearn import preprocessing
 SEQ_LEN = 60  # how long of a preceeding sequence to collect for RNN
 FUTURE_PERIOD_PREDICT = 3  # how far into the future are we trying to predict?
 RATIO_TO_PREDICT = "BCH-USD"
-EPOCHS = 10  # how many passes through our data
+EPOCHS = 20  # how many passes through our data
 BATCH_SIZE = 5  # how many batches? Try smaller batch if you"re getting OOM (out of memory) errors.
 NAME = f"{SEQ_LEN}-SEQ-{FUTURE_PERIOD_PREDICT}-PRED-{int(time.time())}"
 FILE_NAME = "tft_matches.csv"
@@ -83,32 +83,41 @@ def main():
 
     main_df.dropna(inplace=True)
 
-    ## here, split away some slice of the future data from the main main_df.
-    last_20pct = int(len(main_df) * 0.8)
-    time_20pct = main_df.iloc[last_20pct].name
-    while time_20pct == main_df.iloc[last_20pct].name:
-        last_20pct -= 1
+    # ## here, split away some slice of the future data from the main main_df.
+    # last_20pct = int(len(main_df) * 0.8)
+    # time_20pct = main_df.iloc[last_20pct].name
+    # while time_20pct == main_df.iloc[last_20pct].name:
+    #     last_20pct -= 1
+    #
+    # time_20pct = main_df.iloc[last_20pct].name
+    #
+    # validation_main_df = main_df[(main_df.index>=time_20pct)]
+    # main_df = main_df[(main_df.index<time_20pct)]
+    #
+    # train_x, train_y = preprocess_df(main_df)
+    # validation_x, validation_y = preprocess_df(validation_main_df)
+    #
+    # train_x = tf.keras.preprocessing.sequence.pad_sequences(train_x, padding="post")
+    # padded_validation_x = tf.keras.preprocessing.sequence.pad_sequences(validation_x, padding="post")
 
-    time_20pct = main_df.iloc[last_20pct].name
+    X, y = preprocess_df(main_df)
+    padded_data = tf.keras.preprocessing.sequence.pad_sequences(X, padding="post")
 
-    validation_main_df = main_df[(main_df.index>=time_20pct)]
-    main_df = main_df[(main_df.index<time_20pct)]
+    last_20pct = int(len(padded_data) * 0.8)
+    train_x = padded_data[:last_20pct]
+    train_y = y[:last_20pct]
 
-    train_x, train_y = preprocess_df(main_df)
-    validation_x, validation_y = preprocess_df(validation_main_df)
-
-    padded_train_x = tf.keras.preprocessing.sequence.pad_sequences(train_x, padding="post")
-    padded_validation_x = tf.keras.preprocessing.sequence.pad_sequences(validation_x, padding="post")
-
+    validation_x = padded_data[last_20pct:]
+    validation_y = y[last_20pct:]
 
     print(f"train data: {len(train_x)} validation: {len(validation_x)}")
     print(f"train_x.shape = {train_x.shape}")
+    print(f"train_y.shape = {train_y.shape}")
     print(f"validation_x.shape = {validation_x.shape}")
-    print(f"padded_train_x.shape = {padded_train_x.shape}")
-    print(f"padded_validation_x.shape = {padded_validation_x.shape}")
+    print(f"validation_y.shape = {validation_y.shape}")
 
     model = Sequential()
-    model.add(LSTM(128, input_shape=(padded_train_x.shape[1:]), activation="tanh", return_sequences=True))
+    model.add(LSTM(128, input_shape=(train_x.shape[1:]), activation="tanh", return_sequences=True))
     model.add(Dropout(0.2))
     model.add(BatchNormalization())
 
@@ -123,17 +132,14 @@ def main():
     model.add(Dense(32, activation="relu"))
     model.add(Dropout(0.2))
 
-    model.add(Dense(2, activation="softmax"))
+    model.add(Dense(7, activation="softmax"))
 
     model.summary()
 
-
-    opt = tf.keras.optimizers.Adam(lr=0.001, decay=1e-6)
-
     # Compile model
     model.compile(
-        loss="sparse_categorical_crossentropy",
-        optimizer=opt,
+        loss="categorical_crossentropy",
+        optimizer="adam",
         metrics=["accuracy"]
     )
 
@@ -144,10 +150,10 @@ def main():
 
     # Train model
     history = model.fit(
-        np.asarray(padded_train_x), np.asarray(train_y),
-        batch_size=1,
+        np.asarray(train_x), np.asarray(train_y),
+        batch_size=BATCH_SIZE,
         epochs=EPOCHS,
-        validation_data=(np.asarray(padded_validation_x), np.asarray(validation_y))
+        validation_data=(np.asarray(validation_x), np.asarray(validation_y))
     )
 
     # Score model
