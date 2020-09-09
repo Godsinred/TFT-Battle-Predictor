@@ -7,16 +7,15 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, BatchNormalization
 from tensorflow.keras.callbacks import TensorBoard
 from tensorflow.keras.callbacks import ModelCheckpoint, ModelCheckpoint
+from keras.callbacks import EarlyStopping
 import time
 from sklearn import preprocessing
 
-SEQ_LEN = 60  # how long of a preceeding sequence to collect for RNN
-FUTURE_PERIOD_PREDICT = 3  # how far into the future are we trying to predict?
-RATIO_TO_PREDICT = "BCH-USD"
-EPOCHS = 20  # how many passes through our data
+EPOCHS = 50  # how many passes through our data
 BATCH_SIZE = 5  # how many batches? Try smaller batch if you"re getting OOM (out of memory) errors.
-NAME = f"{SEQ_LEN}-SEQ-{FUTURE_PERIOD_PREDICT}-PRED-{int(time.time())}"
+NAME = f"LSTM_TFT_PRED_{int(time.time())}"
 FILE_NAME = "tft_matches.csv"
+NUMBER_PLAYERS = 7
 
 def preprocess_df(df):
     # this is a list of list that will CONTAIN the sequences and their target value
@@ -27,8 +26,8 @@ def preprocess_df(df):
     time_index = df.iloc[0].name
     for i, row in df.iterrows():
         if time_index == i:
-            sequential_data.append([n for n in row[:7]])
-            target = [n for n in row[7:]]
+            sequential_data.append([n for n in row[:NUMBER_PLAYERS]])
+            target = [n for n in row[NUMBER_PLAYERS:]]
         else:
             time_index = i
             # everything but the last element since it will be the attack of the next game
@@ -37,8 +36,8 @@ def preprocess_df(df):
 
             # resets the list
             sequential_data = []
-            sequential_data.append([n for n in row[:7]])
-            target = [n for n in row[7:]]
+            sequential_data.append([n for n in row[:NUMBER_PLAYERS]])
+            target = [n for n in row[NUMBER_PLAYERS:]]
 
     # need to update the last entry since the time won't Change
     sequential_data = sequential_data[:-1]
@@ -57,13 +56,30 @@ def preprocess_df(df):
 
     return np.array(X), np.array(y)
 
+# Since we are short data i will truncate the data by a few and make the shorter
+# one for train/value
+# i.e. 60/20/20
+# 1, 2, 3, 4, 5, 6, 7, 8
+# train = [1, 2, 3, 4] /val = [1, 2, 3, 4, 5, 6] / test = [1, 2, 3, 4, 5, 6, 7, 8]
+# this way we wont hit the arrow of time where we are predicting on data we have already
+# seen and we can increase out data size at the same time
+def split_data(data):
+    all_split_data = []
+    new_y = []
+    for i in data:
+        # Truncates the data by 80% and adds it to the overall list
+        index = int(len(i)*0.8)
+        all_split_data.append(i[:index])
+        new_y.append(i[index])
+
+    return np.asarray(all_split_data), np.asarray(new_y)
 
 def main():
     main_df = pd.DataFrame() # begin empty
 
     player_name = []
     target_name = []
-    for i in range(7):
+    for i in range(NUMBER_PLAYERS):
         player_name.append(f"player_{i+1}")
         target_name.append(f"target_{i+1}")
     player_name.insert(0,"time")
@@ -83,41 +99,23 @@ def main():
 
     main_df.dropna(inplace=True)
 
-    # ## here, split away some slice of the future data from the main main_df.
-    # last_20pct = int(len(main_df) * 0.8)
-    # time_20pct = main_df.iloc[last_20pct].name
-    # while time_20pct == main_df.iloc[last_20pct].name:
-    #     last_20pct -= 1
-    #
-    # time_20pct = main_df.iloc[last_20pct].name
-    #
-    # validation_main_df = main_df[(main_df.index>=time_20pct)]
-    # main_df = main_df[(main_df.index<time_20pct)]
-    #
-    # train_x, train_y = preprocess_df(main_df)
-    # validation_x, validation_y = preprocess_df(validation_main_df)
-    #
-    # train_x = tf.keras.preprocessing.sequence.pad_sequences(train_x, padding="post")
-    # padded_validation_x = tf.keras.preprocessing.sequence.pad_sequences(validation_x, padding="post")
-
     X, y = preprocess_df(main_df)
-    padded_data = tf.keras.preprocessing.sequence.pad_sequences(X, padding="post")
 
-    last_20pct = int(len(padded_data) * 0.8)
-    train_x = padded_data[:last_20pct]
-    train_y = y[:last_20pct]
+    X = tf.keras.preprocessing.sequence.pad_sequences(X, padding="post")
 
-    validation_x = padded_data[last_20pct:]
-    validation_y = y[last_20pct:]
+    validation_x, validation_y = split_data(X)
+    train_x, train_y = split_data(validation_x)
 
-    print(f"train data: {len(train_x)} validation: {len(validation_x)}")
-    print(f"train_x.shape = {train_x.shape}")
-    print(f"train_y.shape = {train_y.shape}")
+    print(f"train data: {len(X)}")
+    print(f"X.shape = {X.shape}")
+    print(f"y.shape = {y.shape}")
     print(f"validation_x.shape = {validation_x.shape}")
     print(f"validation_y.shape = {validation_y.shape}")
+    print(f"train_x.shape = {train_x.shape}")
+    print(f"train_y.shape = {train_y.shape}")
 
     model = Sequential()
-    model.add(LSTM(128, input_shape=(train_x.shape[1:]), activation="tanh", return_sequences=True))
+    model.add(LSTM(128, input_shape=(None,NUMBER_PLAYERS), activation="tanh", return_sequences=True))
     model.add(Dropout(0.2))
     model.add(BatchNormalization())
 
@@ -132,7 +130,7 @@ def main():
     model.add(Dense(32, activation="relu"))
     model.add(Dropout(0.2))
 
-    model.add(Dense(7, activation="softmax"))
+    model.add(Dense(NUMBER_PLAYERS, activation="softmax"))
 
     model.summary()
 
@@ -148,18 +146,23 @@ def main():
     filepath = "RNN_Final-{epoch:02d}-{val_acc:.3f}"  # unique file name that will include the epoch and the validation acc for that epoch
     # checkpoint = ModelCheckpoint("models/{}.model".format(filepath, monitor="val_acc", verbose=1, save_best_only=True, mode="max")) # saves only the best ones
 
+    es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
+
     # Train model
     history = model.fit(
         np.asarray(train_x), np.asarray(train_y),
         batch_size=BATCH_SIZE,
         epochs=EPOCHS,
-        validation_data=(np.asarray(validation_x), np.asarray(validation_y))
+        verbose = 1,
+        validation_data=(np.asarray(validation_x), np.asarray(validation_y)),
+        callbacks = [es]
     )
 
     # Score model
-    score = model.evaluate(validation_x, validation_y, verbose=0)
+    score = model.evaluate(X, y, verbose=0)
     print("Test loss:", score[0])
     print("Test accuracy:", score[1])
+
     # Save model
     model.save("models/{}".format(NAME))
 
